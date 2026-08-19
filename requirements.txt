@@ -1,0 +1,5 @@
+playwright==1.62.0
+supabase==2.31.0
+websockets>=13,<16
+schedule==1.2.1
+python-dotenv==1.0.1
