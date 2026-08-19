@@ -23,9 +23,12 @@ export function useLatestWaitTimes(pollMs = 2 * 60 * 1000) {
   }, []);
 
   useEffect(() => {
-    load();
+    const timeout = setTimeout(load, 0);
     const interval = setInterval(load, pollMs);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    };
   }, [load, pollMs]);
 
   return { data, loading, error, lastUpdated, refresh: load };
@@ -38,23 +41,26 @@ export function useTrends(hours = 24) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    setLoading(true);
-    fetchTrends(hours)
-      .then((json) => {
-        // Pivot: [{scraped_at, wait_time_minutes, hospitals:{short_name}}]
-        // → [{time, HSC Adult: 120, Grace: 90, ...}]
-        const byTime = {};
-        for (const row of json.readings ?? []) {
-          const t = new Date(row.scraped_at).toISOString();
-          if (!byTime[t]) byTime[t] = { time: t };
-          const name = row.hospitals?.short_name ?? `Hospital ${row.hospital_id}`;
-          byTime[t][name] = row.wait_time_minutes;
-        }
-        setData(Object.values(byTime).sort((a, b) => a.time.localeCompare(b.time)));
-        setError(null);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    const timeout = setTimeout(() => {
+      setLoading(true);
+      fetchTrends(hours)
+        .then((json) => {
+          // Pivot: [{scraped_at, wait_time_minutes, hospitals:{short_name}}]
+          // → [{time, HSC Adult: 120, Grace: 90, ...}]
+          const byTime = {};
+          for (const row of json.readings ?? []) {
+            const t = new Date(row.scraped_at).toISOString();
+            if (!byTime[t]) byTime[t] = { time: t };
+            const name = row.hospitals?.short_name ?? `Hospital ${row.hospital_id}`;
+            byTime[t][name] = row.wait_time_minutes;
+          }
+          setData(Object.values(byTime).sort((a, b) => a.time.localeCompare(b.time)));
+          setError(null);
+        })
+        .catch((e) => setError(e.message))
+        .finally(() => setLoading(false));
+    }, 0);
+    return () => clearTimeout(timeout);
   }, [hours]);
 
   return { data, loading, error };

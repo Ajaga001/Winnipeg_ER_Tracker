@@ -4,6 +4,7 @@
 import { Clock, Users } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useNow } from "@/hooks/useNow";
 
 const URGENCY = (mins) => {
   if (mins === null || mins === undefined) return "unknown";
@@ -35,8 +36,9 @@ export default function HospitalCard({ hospital }) {
   const urgency = URGENCY(wait_time_minutes);
   const styles = URGENCY_STYLES[urgency];
 
-  const updatedAgo = scraped_at
-    ? Math.round((Date.now() - new Date(scraped_at)) / 60000)
+  const now = useNow();
+  const updatedAgo = scraped_at && now !== null
+    ? Math.round((now - new Date(scraped_at)) / 60000)
     : null;
 
   return (
