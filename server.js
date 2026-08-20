@@ -83,32 +83,51 @@ app.use(
 // ── 2. CORS – only allow your frontend ───────────────────────────────────────
 const allowedOrigins = [
   FRONTEND_ORIGIN,
-  // Add "http://localhost:5173" here ONLY during local dev (remove before production)
-  ...(process.env.NODE_ENV === "development" ? ["http://localhost:5173"] : []),
+  "http://localhost:5173",
+  "http://localhost:3000",
 ];
 
-app.use(
-  cors({
-    origin(requestOrigin, callback) {
-      // Requests with no Origin header (health checks, curl, direct browser
-      // navigation, server-to-server calls) are never subject to CORS in the
-      // first place — only the browser sends/enforces Origin for cross-origin
-      // fetches — so always allow them, not just in development.
-      if (!requestOrigin) {
-        return callback(null, true);
-      }
-      if (allowedOrigins.includes(normalizeOrigin(requestOrigin))) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS: origin '${requestOrigin}' not allowed`));
-      }
-    },
-    methods: ["GET"],               // read-only API – no POST/DELETE needed
-    allowedHeaders: ["Content-Type"],
-    credentials: false,             // no cookies; we use service key server-side only
-    maxAge: 600,                    // preflight cache: 10 minutes
-  })
-);
+// Vercel gives every preview deployment (per-branch, per-PR) its own unique
+// *.vercel.app hostname, so the production alias alone isn't enough to cover
+// previews. Match by hostname suffix rather than a string prefix/includes
+// check so this can't be tricked by a origin like "https://vercel.app.evil.com".
+function isAllowedOrigin(requestOrigin) {
+  const origin = normalizeOrigin(requestOrigin);
+  if (allowedOrigins.includes(origin)) return true;
+
+  try {
+    const { hostname, protocol } = new URL(origin);
+    return protocol === "https:" && (hostname === "vercel.app" || hostname.endsWith(".vercel.app"));
+  } catch {
+    return false;
+  }
+}
+
+const corsOptions = {
+  origin(requestOrigin, callback) {
+    // Requests with no Origin header (health checks, curl, direct browser
+    // navigation, server-to-server calls) are never subject to CORS in the
+    // first place — only the browser sends/enforces Origin for cross-origin
+    // fetches — so always allow them.
+    if (!requestOrigin) {
+      return callback(null, true);
+    }
+    if (isAllowedOrigin(requestOrigin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS: origin '${requestOrigin}' not allowed`));
+    }
+  },
+  methods: ["GET", "OPTIONS"],    // read-only API – no POST/PUT/DELETE routes exist
+  allowedHeaders: ["Content-Type"],
+  credentials: false,             // no cookies; we use service key server-side only
+  maxAge: 600,                    // preflight cache: 10 minutes
+};
+
+app.use(cors(corsOptions));
+// Explicit preflight handling for every route (in addition to the global
+// middleware above, which already short-circuits OPTIONS requests itself).
+app.options("*", cors(corsOptions));
 
 // ── 3. Rate limiting ──────────────────────────────────────────────────────────
 
