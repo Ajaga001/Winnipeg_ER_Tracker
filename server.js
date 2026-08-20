@@ -30,7 +30,17 @@ for (const key of REQUIRED_ENV) {
 }
 
 const PORT = parseInt(process.env.PORT ?? "4000", 10);
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN; // e.g. https://mb-er-tracker.netlify.app
+
+// Origin headers never carry a trailing slash or whitespace, but env vars
+// pasted into a hosting dashboard often do — normalize both sides so a
+// stray "/" or space doesn't silently break every CORS check.
+const normalizeOrigin = (origin) => origin?.trim().replace(/\/+$/, "");
+
+const FRONTEND_ORIGIN = normalizeOrigin(process.env.FRONTEND_ORIGIN); // e.g. https://winnipeg-er-tracker.vercel.app
+if (!FRONTEND_ORIGIN) {
+  console.error("[FATAL] FRONTEND_ORIGIN is set but empty/whitespace after trimming.");
+  process.exit(1);
+}
 
 // supabase-js appends `/rest/v1` (and other API paths) onto SUPABASE_URL itself,
 // so the env var must be the bare project domain — a `/rest/v1` suffix here
@@ -80,11 +90,14 @@ const allowedOrigins = [
 app.use(
   cors({
     origin(requestOrigin, callback) {
-      // Allow server-to-server requests (no Origin header) during development
-      if (!requestOrigin && process.env.NODE_ENV === "development") {
+      // Requests with no Origin header (health checks, curl, direct browser
+      // navigation, server-to-server calls) are never subject to CORS in the
+      // first place — only the browser sends/enforces Origin for cross-origin
+      // fetches — so always allow them, not just in development.
+      if (!requestOrigin) {
         return callback(null, true);
       }
-      if (allowedOrigins.includes(requestOrigin)) {
+      if (allowedOrigins.includes(normalizeOrigin(requestOrigin))) {
         callback(null, true);
       } else {
         callback(new Error(`CORS: origin '${requestOrigin}' not allowed`));
