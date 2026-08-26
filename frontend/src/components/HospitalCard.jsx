@@ -29,6 +29,7 @@ const URGENCY_STYLES = {
 const STALE_THRESHOLD_MINUTES = 90;
 
 function formatAge(minutes) {
+  if (!Number.isFinite(minutes)) return "—";
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
@@ -50,9 +51,14 @@ export default function HospitalCard({ hospital }) {
   const { hospital_name, short_name, type, wait_time_minutes, patients_waiting, scraped_at } = hospital;
 
   const now = useNow();
-  const updatedAgo = scraped_at && now !== null
-    ? Math.round((now - new Date(scraped_at)) / 60000)
+  // scraped_at should always be a valid ISO timestamp from the API, but
+  // guard against an unparseable value producing NaN (Invalid Date) rather
+  // than a garbage "NaNd ago" label — Number.isFinite rejects both NaN and
+  // the null we get before useNow()'s first tick, unlike a plain !== null.
+  const rawUpdatedAgo = scraped_at && now !== null
+    ? Math.round((now - new Date(scraped_at).getTime()) / 60000)
     : null;
+  const updatedAgo = Number.isFinite(rawUpdatedAgo) ? rawUpdatedAgo : null;
   const isStale = updatedAgo !== null && updatedAgo > STALE_THRESHOLD_MINUTES;
 
   // A stale reading's wait time is more likely wrong than right, so don't
@@ -97,7 +103,7 @@ export default function HospitalCard({ hospital }) {
               {patients_waiting} waiting
             </span>
           )}
-          {updatedAgo !== null && (
+          {scraped_at && (
             <span className={`flex items-center gap-1 ml-auto ${isStale ? "text-amber-400" : ""}`}>
               <Clock className="w-3 h-3" />
               {formatAge(updatedAgo)}
