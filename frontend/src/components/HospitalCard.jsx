@@ -20,7 +20,22 @@ const URGENCY_STYLES = {
   high:     { bar: "bg-orange-400",  badge: "bg-orange-900/60 text-orange-300",   label: "Long wait" },
   critical: { bar: "bg-red-400",     badge: "bg-red-900/60 text-red-300",         label: "Critical" },
   unknown:  { bar: "bg-slate-600",   badge: "bg-slate-700 text-slate-400",        label: "No data" },
+  stale:    { bar: "bg-slate-600",   badge: "bg-slate-700 text-slate-400",        label: "Stale data" },
 };
+
+// A reading older than this is more likely stale than accurate (roughly 3x
+// the scraper's default 30-minute interval), so its urgency color-coding
+// stops being trustworthy and the card should say so instead of guessing.
+const STALE_THRESHOLD_MINUTES = 90;
+
+function formatAge(minutes) {
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 function formatWait(mins) {
   if (mins === null || mins === undefined) return "—";
@@ -33,13 +48,17 @@ function formatWait(mins) {
 
 export default function HospitalCard({ hospital }) {
   const { hospital_name, short_name, type, wait_time_minutes, patients_waiting, scraped_at } = hospital;
-  const urgency = URGENCY(wait_time_minutes);
-  const styles = URGENCY_STYLES[urgency];
 
   const now = useNow();
   const updatedAgo = scraped_at && now !== null
     ? Math.round((now - new Date(scraped_at)) / 60000)
     : null;
+  const isStale = updatedAgo !== null && updatedAgo > STALE_THRESHOLD_MINUTES;
+
+  // A stale reading's wait time is more likely wrong than right, so don't
+  // color-code it as if it were a trustworthy live urgency signal.
+  const urgency = isStale ? "stale" : URGENCY(wait_time_minutes);
+  const styles = URGENCY_STYLES[urgency];
 
   return (
     <Card className="relative gap-0 overflow-hidden border border-slate-700/50 bg-slate-800/70 py-0
@@ -79,9 +98,9 @@ export default function HospitalCard({ hospital }) {
             </span>
           )}
           {updatedAgo !== null && (
-            <span className="flex items-center gap-1 ml-auto">
+            <span className={`flex items-center gap-1 ml-auto ${isStale ? "text-amber-400" : ""}`}>
               <Clock className="w-3 h-3" />
-              {updatedAgo < 1 ? "just now" : `${updatedAgo}m ago`}
+              {formatAge(updatedAgo)}
             </span>
           )}
         </div>

@@ -158,12 +158,14 @@ def run_scrape_and_store() -> None:
         return
 
     rows = []
+    reported_hospital_ids = set()
     for h in hospitals:
         hosp_id = get_hospital_id(client, h["hospital_name"])
         if hosp_id is None:
             log.warning("Skipping hospital '%s' – no DB id.", h["hospital_name"])
             continue
 
+        reported_hospital_ids.add(hosp_id)
         rows.append(
             {
                 "hospital_id": hosp_id,
@@ -174,6 +176,28 @@ def run_scrape_and_store() -> None:
                 "scrape_status": "ok",
             }
         )
+
+    # A known hospital that's missing from this cycle's results (e.g. the
+    # source page dropped it) would otherwise leave its last real reading
+    # sitting in `latest_wait_times` forever, looking live when it's actually
+    # stale. Record a `no_data` sentinel for it instead, so the gap is visible.
+    missing_hospital_ids = set(_hospital_cache.values()) - reported_hospital_ids
+    if missing_hospital_ids:
+        log.warning(
+            "%d known hospital(s) missing from this scrape: %s",
+            len(missing_hospital_ids), sorted(missing_hospital_ids),
+        )
+        for hosp_id in missing_hospital_ids:
+            rows.append(
+                {
+                    "hospital_id": hosp_id,
+                    "scraped_at": scraped_at,
+                    "raw_wait_time": None,
+                    "wait_time_minutes": None,
+                    "patients_waiting": None,
+                    "scrape_status": "no_data",
+                }
+            )
 
     if not rows:
         log.warning("No valid rows to insert after hospital ID lookup.")
