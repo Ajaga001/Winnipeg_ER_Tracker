@@ -67,14 +67,8 @@ def build_hospital_record(cell_texts, facility_type):
     }
 
 
-def scrape_source(page, facility_type, url):
-    """Scrapes every facility row from one WRHA wait-times page."""
-    # Navigate and wait for the network to settle
-    page.goto(url, wait_until="networkidle")
-
-    # Wait specifically for the table to appear on the page
-    page.wait_for_selector("table.dcf-table")
-
+def parse_rows(page, facility_type):
+    """Reads every facility row from the wait-time table on a loaded page."""
     records = []
 
     # Target the specific rows inside the table body
@@ -86,6 +80,17 @@ def scrape_source(page, facility_type, url):
             records.append(build_hospital_record(cell_texts, facility_type))
 
     return records
+
+
+def scrape_source(page, facility_type, url):
+    """Scrapes every facility row from one WRHA wait-times page."""
+    # Navigate and wait for the network to settle
+    page.goto(url, wait_until="networkidle")
+
+    # Wait specifically for the table to appear on the page
+    page.wait_for_selector("table.dcf-table")
+
+    return parse_rows(page, facility_type)
 
 
 def scrape_wait_times():

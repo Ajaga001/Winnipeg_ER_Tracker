@@ -1,0 +1,4 @@
+-r requirements.txt
+pandas>=3.0
+scikit-learn>=1.8
+pytest>=9.0

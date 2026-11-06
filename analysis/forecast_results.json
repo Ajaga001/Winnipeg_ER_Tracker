@@ -1,0 +1,44 @@
+{
+  "horizon_hours": 24.0,
+  "train_readings": 791,
+  "test_readings_scored": 233,
+  "test_readings_capped_excluded": 39,
+  "train_period": [
+    "2026-08-26",
+    "2026-10-09"
+  ],
+  "test_period": [
+    "2026-10-10",
+    "2026-10-26"
+  ],
+  "baseline_mae_minutes": 114.1,
+  "model_mae_minutes": 98.1,
+  "improvement_pct": 14.0,
+  "mae_by_hospital_id": {
+    "1": {
+      "baseline_error": 98.0,
+      "model_error": 95.9
+    },
+    "2": {
+      "baseline_error": 118.0,
+      "model_error": 82.4
+    },
+    "3": {
+      "baseline_error": 141.0,
+      "model_error": 106.5
+    },
+    "4": {
+      "baseline_error": 91.1,
+      "model_error": 114.9
+    }
+  },
+  "feature_importance": {
+    "site_recent_mean": 0.747,
+    "hour": 0.104,
+    "wait_last_week": 0.049,
+    "weekday": 0.043,
+    "wait_yesterday": 0.041,
+    "hospital_id": 0.014,
+    "is_weekend": 0.002
+  }
+}
