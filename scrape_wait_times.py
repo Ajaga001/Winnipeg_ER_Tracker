@@ -11,6 +11,10 @@ SOURCES = (
     ("urgent_care", "https://wrha.mb.ca/wait-times/urgent-care/"),
 )
 
+# The source never reports more than "15 hrs", so a reading at this value means
+# "15 hours or longer" rather than an exact wait.
+WAIT_CAP_MINUTES = 900
+
 
 def parse_wait_minutes(raw_wait_time):
     """Parses strings like '2h 15m', '45m', '1h' into total minutes. Returns None if unparseable."""
@@ -44,14 +48,21 @@ def parse_patient_count(raw_count):
     return int(match.group()) if match else None
 
 
+def is_wait_capped(wait_minutes):
+    """True when a parsed wait sits at the source's reporting cap."""
+    return wait_minutes is not None and wait_minutes >= WAIT_CAP_MINUTES
+
+
 def build_hospital_record(cell_texts, facility_type):
     """Turns one table row (facility, waiting, treating, wait time) into a hospital record."""
     facility, waiting, _treating, raw_wait_time = cell_texts
+    wait_minutes = parse_wait_minutes(raw_wait_time)
     return {
         "hospital_name": facility,
         "facility_type": facility_type,
         "raw_wait_time": raw_wait_time,
-        "wait_time_minutes": parse_wait_minutes(raw_wait_time),
+        "wait_time_minutes": wait_minutes,
+        "wait_capped": is_wait_capped(wait_minutes),
         "patients_waiting": parse_patient_count(waiting),
     }
 

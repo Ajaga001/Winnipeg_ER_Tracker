@@ -211,7 +211,7 @@ app.get("/api/wait-times/history", strictLimiter, async (req, res) => {
 
     const { data, error } = await supabase
       .from("wait_times_log")
-      .select("scraped_at, wait_time_minutes, patients_waiting, scrape_status")
+      .select("scraped_at, wait_time_minutes, wait_capped, patients_waiting, scrape_status")
       .eq("hospital_id", hospitalId)
       .eq("scrape_status", "ok")
       .gte("scraped_at", since)
@@ -241,7 +241,7 @@ app.get("/api/wait-times/trends", strictLimiter, async (req, res) => {
     const { data, error } = await supabase
       .from("wait_times_log")
       .select(
-        "scraped_at, wait_time_minutes, patients_waiting, hospital_id, hospitals(short_name)"
+        "scraped_at, wait_time_minutes, wait_capped, patients_waiting, hospital_id, hospitals(short_name)"
       )
       .eq("scrape_status", "ok")
       .gte("scraped_at", since)
@@ -267,7 +267,7 @@ app.get("/api/wait-times/daily-stats", strictLimiter, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("daily_wait_time_stats")
-      .select("stat_date, avg_wait_minutes, min_wait_minutes, max_wait_minutes, median_wait_minutes")
+      .select("stat_date, reading_count, capped_reading_count, avg_wait_minutes, min_wait_minutes, max_wait_minutes, median_wait_minutes")
       .eq("hospital_id", hospitalId)
       .order("stat_date", { ascending: false })
       .limit(30); // last 30 days

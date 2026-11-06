@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS wait_times_log (
     raw_wait_time       TEXT,                               -- original string e.g. "2h 15m"
     wait_time_minutes   INTEGER                             -- parsed total minutes; NULL = not posted
                             CHECK (wait_time_minutes IS NULL OR wait_time_minutes >= 0),
-    patients_waiting    INTEGER                             -- headcount shown on the page; NULL = not posted
+    wait_capped         BOOLEAN         NOT NULL DEFAULT FALSE, -- TRUE = source's 15-hour ceiling, true wait is at least this
+    patients_waiting    INTEGER                            -- headcount shown on the page; NULL = not posted
                             CHECK (patients_waiting IS NULL OR patients_waiting >= 0),
     scrape_status       TEXT            NOT NULL DEFAULT 'ok'
                             CHECK (scrape_status IN ('ok', 'site_down', 'parse_error', 'no_data')),
@@ -104,13 +105,17 @@ CREATE INDEX IF NOT EXISTS wait_times_log_status_idx
 -- 4. MATERIALIZED VIEW – DAILY AGGREGATES
 -- Refreshed by the scheduler after each scrape cycle.
 -- Powers the trend charts without re-scanning the full log.
+-- The mean excludes capped readings because 900 isn't their true value. The
+-- median keeps them: it only needs their rank, and "at least 900" ranks correctly.
 -- -------------------------------------------------------------
 CREATE MATERIALIZED VIEW IF NOT EXISTS daily_wait_time_stats AS
 SELECT
     hospital_id,
     DATE(scraped_at AT TIME ZONE 'America/Winnipeg')    AS stat_date,
     COUNT(*)                                            AS reading_count,
-    ROUND(AVG(wait_time_minutes)::NUMERIC, 1)           AS avg_wait_minutes,
+    COUNT(*) FILTER (WHERE wait_capped)                 AS capped_reading_count,
+    ROUND((AVG(wait_time_minutes)
+        FILTER (WHERE NOT wait_capped))::NUMERIC, 1)    AS avg_wait_minutes,
     MIN(wait_time_minutes)                              AS min_wait_minutes,
     MAX(wait_time_minutes)                              AS max_wait_minutes,
     PERCENTILE_CONT(0.5) WITHIN GROUP
@@ -139,7 +144,8 @@ SELECT DISTINCT ON (wtl.hospital_id)
     wtl.raw_wait_time,
     wtl.wait_time_minutes,
     wtl.patients_waiting,
-    wtl.scrape_status
+    wtl.scrape_status,
+    wtl.wait_capped
 FROM  wait_times_log wtl
 JOIN  hospitals h ON h.id = wtl.hospital_id
 WHERE h.is_active

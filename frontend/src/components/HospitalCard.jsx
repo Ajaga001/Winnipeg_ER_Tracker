@@ -38,9 +38,11 @@ function formatAge(minutes) {
   return `${days}d ago`;
 }
 
-function formatWait(mins) {
+function formatWait(mins, capped) {
   if (mins === null || mins === undefined) return "—";
   const h = Math.floor(mins / 60);
+  // The source stops counting at its cap, so show this as a lower bound.
+  if (capped) return `${h}h+`;
   const m = mins % 60;
   if (h === 0) return `${m}m`;
   if (m === 0) return `${h}h`;
@@ -48,7 +50,7 @@ function formatWait(mins) {
 }
 
 export default function HospitalCard({ hospital }) {
-  const { hospital_name, short_name, type, wait_time_minutes, patients_waiting, scraped_at } = hospital;
+  const { hospital_name, short_name, type, wait_time_minutes, wait_capped, patients_waiting, scraped_at } = hospital;
 
   const now = useNow();
   // scraped_at should always be a valid ISO timestamp from the API, but
@@ -90,7 +92,7 @@ export default function HospitalCard({ hospital }) {
         {/* Wait time – large display */}
         <div className="mb-4">
           <span className="text-3xl font-bold tracking-tight text-white font-mono">
-            {formatWait(wait_time_minutes)}
+            {formatWait(wait_time_minutes, wait_capped)}
           </span>
           <span className="text-slate-400 text-sm ml-2">wait</span>
         </div>

@@ -33,15 +33,18 @@ function LastUpdatedBadge({ date, onRefresh }) {
 function StatSummary({ hospitals }) {
   if (!hospitals.length) return null;
   const withData = hospitals.filter((h) => h.wait_time_minutes != null);
-  const avg = withData.length
-    ? Math.round(withData.reduce((s, h) => s + h.wait_time_minutes, 0) / withData.length)
+  // A capped reading is a lower bound rather than a real value, so it stays out of the mean.
+  const uncapped = withData.filter((h) => !h.wait_capped);
+  const avg = uncapped.length
+    ? Math.round(uncapped.reduce((s, h) => s + h.wait_time_minutes, 0) / uncapped.length)
     : null;
   const shortest = withData.reduce((a, b) => a.wait_time_minutes < b.wait_time_minutes ? a : b, withData[0]);
   const longest  = withData.reduce((a, b) => a.wait_time_minutes > b.wait_time_minutes ? a : b, withData[0]);
 
-  const fmt = (m) => {
+  const fmt = (m, capped = false) => {
     if (m == null) return "—";
     const h = Math.floor(m / 60), min = m % 60;
+    if (capped) return `${h}h+`;
     return h > 0 ? `${h}h ${min > 0 ? min + "m" : ""}`.trim() : `${min}m`;
   };
 
@@ -50,7 +53,7 @@ function StatSummary({ hospitals }) {
       {[
         { label: "System Average", value: fmt(avg), sub: "across all sites" },
         { label: "Shortest Wait", value: fmt(shortest?.wait_time_minutes), sub: shortest?.short_name },
-        { label: "Longest Wait",  value: fmt(longest?.wait_time_minutes),  sub: longest?.short_name  },
+        { label: "Longest Wait",  value: fmt(longest?.wait_time_minutes, longest?.wait_capped), sub: longest?.short_name },
       ].map(({ label, value, sub }) => (
         <Card key={label} className="gap-0 border-slate-700/40 bg-slate-800/40 py-4">
           <CardContent className="px-4">

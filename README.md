@@ -70,6 +70,16 @@ flowchart LR
 3. **Serve** — `server.js` is a read-only Express API that queries Supabase with the service-role key (never exposed to the browser) and exposes `/api/hospitals`, `/api/wait-times/latest`, `/api/wait-times/history`, `/api/wait-times/trends`, and `/api/wait-times/daily-stats`, all protected by Helmet, a CORS allowlist, and rate limiting.
 4. **Display** — the React frontend talks only to the Express API (never directly to Supabase — see `frontend/src/lib/api.js`), polling `/api/wait-times/latest` every 2 minutes and re-fetching `/api/wait-times/trends` whenever the selected time range changes.
 
+## The 15-Hour Cap
+
+The source never reports a wait above "15 hrs": across nearly 2,000 valid readings the highest value is exactly 15 hours, reached 115 times, with quarter-hour values climbing right up to it. WRHA doesn't document a cap, so this is inferred from the data, but it means a reading of 15 hours is best read as "15 hours or longer". Statisticians call this right-censoring.
+
+`wait_capped` flags those readings. `raw_wait_time` and `wait_time_minutes` keep exactly what was published.
+
+- **Means exclude capped readings**, because 900 isn't their true value. This still understates the worst days, since the longest waits are the ones removed, so read the mean alongside the capped count.
+- **Medians and percentiles include them.** These only depend on rank, and "at least 900" ranks correctly, so they stay valid unless the percentile itself lands on the cap.
+- **The dashboard shows "15h+"** for a capped reading.
+
 ## Project Structure
 
 ```

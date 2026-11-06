@@ -182,6 +182,7 @@ def run_scrape_and_store() -> None:
                 "scraped_at": scraped_at,
                 "raw_wait_time": h.get("raw_wait_time"),
                 "wait_time_minutes": h.get("wait_time_minutes"),
+                "wait_capped": h.get("wait_capped", False),
                 "patients_waiting": h.get("patients_waiting"),
                 "scrape_status": "ok",
             }
@@ -205,6 +206,7 @@ def run_scrape_and_store() -> None:
                     "scraped_at": scraped_at,
                     "raw_wait_time": None,
                     "wait_time_minutes": None,
+                    "wait_capped": False,
                     "patients_waiting": None,
                     "scrape_status": "no_data",
                 }
