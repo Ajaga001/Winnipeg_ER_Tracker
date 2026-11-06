@@ -6,12 +6,14 @@ CREATE OR REPLACE FUNCTION refresh_daily_stats()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER   -- runs as the function owner (postgres), not the caller
+SET search_path = public
 AS $$
 BEGIN
     REFRESH MATERIALIZED VIEW CONCURRENTLY daily_wait_time_stats;
 END;
 $$;
 
--- Only the service role may call this
-REVOKE ALL ON FUNCTION refresh_daily_stats() FROM PUBLIC;
+-- Only the service role may call this. Supabase grants EXECUTE to anon and
+-- authenticated by default, so revoking from PUBLIC alone isn't enough.
+REVOKE ALL ON FUNCTION refresh_daily_stats() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION refresh_daily_stats() TO service_role;
