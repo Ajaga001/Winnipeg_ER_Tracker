@@ -8,7 +8,7 @@ Real-time emergency room wait time tracking and analytics dashboard for the Winn
 - **Auto-refresh polling** — the dashboard polls the API every 2 minutes for the latest snapshot, so the "Current Status" view stays up to date without a manual refresh.
 - **Trend visualization** — a multi-line chart (6h / 12h / 24h / 48h ranges) shows historical wait times per hospital, with per-hospital toggles and a custom tooltip.
 - **Canonical hospital matching** — the scraper's raw facility names are normalized against an alias table before being matched to the canonical `hospitals` record, so a page copy change (e.g. "Health Sciences Centre - Adult" vs. "...Adult Emergency") doesn't spawn duplicate hospital rows.
-- **Resilient error recovery** — scrape failures (site down, page structure changed, zero rows parsed) are caught and logged as sentinel rows in the database instead of crashing the scheduler, so gaps in the time series are visible rather than silent.
+- **Resilient error recovery** — scrape failures (site down, page structure changed, zero rows parsed) are caught and recorded in `scrape_runs` instead of crashing the scheduler, so gaps in the time series are visible rather than silent.
 
 ## Tech Stack
 
@@ -66,7 +66,7 @@ flowchart LR
 ```
 
 1. **Scrape** — `scrape_wait_times.py` launches headless Chromium via Playwright, visits WRHA's two wait-time pages (emergency departments and urgent care centres publish separately; see `SOURCES`), and parses each facility's row (facility name, patients waiting, raw wait-time string) into structured minutes (`parse_wait_minutes` handles both `"2h 15m"` and decimal formats like `"12.75 hrs"`).
-2. **Store** — `scheduler.py` runs on an interval (`SCRAPE_INTERVAL_MINUTES`, default 30), resolves each scraped facility name to a canonical `hospitals.id` (via `HOSPITAL_NAME_ALIASES` and a cached lookup, inserting a stub row only for genuinely unknown facilities), and upserts one row per hospital into `wait_times_log`. Scrape failures are written as sentinel rows (`scrape_status = 'site_down' | 'parse_error'`) instead of being dropped, and the `daily_wait_time_stats` materialized view is refreshed via an RPC call after each successful cycle.
+2. **Store** — `scheduler.py` runs on an interval (`SCRAPE_INTERVAL_MINUTES`, default 30), resolves each scraped facility name to a canonical `hospitals.id` (via `HOSPITAL_NAME_ALIASES` and a cached lookup, inserting a stub row only for genuinely unknown facilities), and upserts one row per hospital into `wait_times_log`. Every cycle, including a failed one, is recorded in `scrape_runs`, and the `daily_wait_time_stats` materialized view is refreshed via an RPC call after each successful cycle.
 3. **Serve** — `server.js` is a read-only Express API that queries Supabase with the service-role key (never exposed to the browser) and exposes `/api/hospitals`, `/api/wait-times/latest`, `/api/wait-times/history`, `/api/wait-times/trends`, and `/api/wait-times/daily-stats`, all protected by Helmet, a CORS allowlist, and rate limiting.
 4. **Display** — the React frontend talks only to the Express API (never directly to Supabase — see `frontend/src/lib/api.js`), polling `/api/wait-times/latest` every 2 minutes and re-fetching `/api/wait-times/trends` whenever the selected time range changes.
 
@@ -80,12 +80,24 @@ The source never reports a wait above "15 hrs": across nearly 2,000 valid readin
 - **Medians and percentiles include them.** These only depend on rank, and "at least 900" ranks correctly, so they stay valid unless the percentile itself lands on the cap.
 - **The dashboard shows "15h+"** for a capped reading.
 
+## Scrape Reliability
+
+The scraper runs on a GitHub Actions cron set to every 30 minutes, but that isn't what happens in practice. Through 2026-11-06 the log holds 555 snapshots over 69 active days, about 8 a day instead of 48, with a median gap of 154 minutes.
+
+- **Why runs are missing:** GitHub treats cron as best-effort and delays or drops scheduled runs under load, so a 30-minute schedule on free runners is a request, not a guarantee. The cron now sits on minutes 7 and 37, away from the busiest marks, which should help but won't reach 48 a day.
+- **Why there's an 11-day hole:** GitHub disables scheduled workflows in public repositories after 60 days without repository activity. The last commit was 2026-08-26 and the last scheduled run was 60 days later, on 2026-10-25 local time. Nothing ran again until a manual trigger on 2026-11-06.
+- **What guards against it now:** `watchdog.yml` runs every 6 hours, re-enables the scheduled workflows, and fails if the newest successful scrape is more than 6 hours old. GitHub emails you when it fails. `/api/health/scrape` reports the same thing over HTTP.
+- **Failures are visible now:** `scrape_runs` records every cycle, and `python scheduler.py --once` exits non-zero on a failed or partial cycle, so the Action turns red instead of reporting success.
+
+GitHub doesn't document whether the API re-enable call resets the 60-day timer, so treat the keep-alive as unproven until it has lived through a quiet period. The freshness check is the backstop. For a steadier cadence, a free external scheduler such as cron-job.org can call the [`workflow_dispatch` API](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event) every 30 minutes, using a fine-grained token limited to this repository's Actions.
+
 ## Project Structure
 
 ```
 Winnipeg_ER_Tracker/
 ├── scrape_wait_times.py     # Playwright scraper — reads live wait times from the WRHA site
 ├── scheduler.py              # Runs the scraper on an interval, upserts into Supabase
+├── check_heartbeat.py        # Fails if no scrape has succeeded recently (run by watchdog.yml)
 ├── schema.sql                 # Supabase/Postgres schema: tables, indexes, views, RLS policies
 ├── functions.sql              # Postgres RPC function (refresh_daily_stats) used by the scheduler
 ├── migrations/                # Numbered, re-runnable changes for an existing database

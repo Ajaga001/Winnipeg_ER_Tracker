@@ -84,6 +84,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS wait_times_log_hospital_scraped_at_uidx
 
 
 -- -------------------------------------------------------------
+-- 2b. SCRAPE_RUNS
+-- Heartbeat – one row per scrape cycle, including failed ones.
+-- 'partial' means one source page failed but the other was stored.
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS scrape_runs (
+    id                  BIGSERIAL       PRIMARY KEY,
+    started_at          TIMESTAMPTZ     NOT NULL,
+    finished_at         TIMESTAMPTZ     NOT NULL,
+    status              TEXT            NOT NULL
+                            CHECK (status IN ('success', 'partial', 'failed')),
+    hospitals_parsed    INTEGER         NOT NULL DEFAULT 0,
+    error               TEXT
+);
+
+CREATE INDEX IF NOT EXISTS scrape_runs_finished_at_idx
+    ON scrape_runs (finished_at DESC);
+
+-- No public policies: only the service role, which bypasses RLS, can read or write.
+ALTER TABLE scrape_runs ENABLE ROW LEVEL SECURITY;
+
+
+-- -------------------------------------------------------------
 -- 3. INDEXES FOR COMMON QUERY PATTERNS
 -- -------------------------------------------------------------
 

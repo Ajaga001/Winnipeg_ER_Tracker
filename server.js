@@ -31,6 +31,10 @@ for (const key of REQUIRED_ENV) {
 
 const PORT = parseInt(process.env.PORT ?? "4000", 10);
 
+// Matches STALE_AFTER_MINUTES in check_heartbeat.py. GitHub's cron has run up to
+// several hours apart, so anything tighter would raise false alarms.
+const SCRAPE_STALE_MINUTES = 360;
+
 // Origin headers never carry a trailing slash or whitespace, but env vars
 // pasted into a hosting dashboard often do — normalize both sides so a
 // stray "/" or space doesn't silently break every CORS check.
@@ -155,6 +159,36 @@ const strictLimiter = rateLimit({
 // Health check (for Netlify/Render uptime monitoring)
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// GET /api/health/scrape
+// Reports when data last reached the database. /health only proves the API is
+// up; this catches the scraper silently stopping while the API looks fine.
+app.get("/api/health/scrape", async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("scrape_runs")
+      .select("finished_at, status")
+      .in("status", ["success", "partial"])
+      .order("finished_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    const ageMinutes = data
+      ? Math.round((Date.now() - new Date(data.finished_at).getTime()) / 60000)
+      : null;
+
+    res.json({
+      status: ageMinutes !== null && ageMinutes <= SCRAPE_STALE_MINUTES ? "ok" : "stale",
+      last_successful_scrape: data?.finished_at ?? null,
+      age_minutes: ageMinutes,
+    });
+  } catch (err) {
+    console.error("[/api/health/scrape]", err.message);
+    res.status(500).json({ error: "Failed to fetch scrape health." });
+  }
 });
 
 // GET /api/hospitals

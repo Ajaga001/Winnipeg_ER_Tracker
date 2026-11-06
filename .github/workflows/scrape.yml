@@ -2,7 +2,8 @@ name: Scrape ER Wait Times
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # Off the :00 and :30 marks, where GitHub's load is heaviest and runs get dropped
+    - cron: "7,37 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -31,4 +32,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python -c "from scheduler import run_scrape_and_store; run_scrape_and_store()"
+        run: python scheduler.py --once

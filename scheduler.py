@@ -15,22 +15,26 @@ Each cycle:
     - Looks up each hospital's ID in the `hospitals` table
     - Upserts one row per hospital into `wait_times_log`
     - Refreshes the daily_wait_time_stats materialized view
+    - Records the outcome in `scrape_runs` (the heartbeat)
     - Logs all activity to stdout + rotating file (logs/scheduler.log)
+
+`python scheduler.py --once` runs a single cycle and exits non-zero on failure.
 """
 
+import argparse
 import os
 import sys
-import json
 import logging
 import logging.handlers
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import schedule
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Error as PlaywrightError
 
 # ── Local import (scraper lives alongside this file at the project root) ────
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -130,43 +134,15 @@ def get_hospital_id(client: Client, name: str, facility_type: str) -> int | None
 
 
 # ── Core job ──────────────────────────────────────────────────────────────────
-def run_scrape_and_store() -> None:
-    log.info("-- Scrape cycle starting --------------------------------")
+@dataclass
+class CycleResult:
+    status: str  # 'success' | 'partial' | 'failed' (see scrape_runs.status)
+    hospitals_parsed: int = 0
+    error: str | None = None
 
-    # 1. Fetch data
-    try:
-        snapshot = scrape_wait_times()
-    except (PlaywrightTimeoutError, PlaywrightError) as e:
-        log.error("Scrape failed (browser/network): %s", e)
-        _store_error_row(status="site_down", notes=str(e))
-        return
 
-    scraped_at = snapshot["scraped_at"]
-    hospitals = snapshot.get("hospitals", [])
-    source_errors = snapshot.get("source_errors", {})
-
-    for url, error in source_errors.items():
-        log.error("Scrape failed for %s: %s", url, error)
-
-    if not hospitals:
-        if source_errors:
-            _store_error_row(status="site_down", notes="; ".join(source_errors.values()))
-        else:
-            log.warning("Scrape succeeded but returned 0 hospitals. Page structure may have changed.")
-            _store_error_row(status="parse_error", notes="Zero hospitals parsed from page.")
-        return
-
-    log.info("Fetched %d hospitals at %s", len(hospitals), scraped_at)
-
-    # 2. Build rows
-    try:
-        client = get_supabase_client()
-        if not _hospital_cache:
-            load_hospital_cache(client)
-    except (EnvironmentError, Exception) as e:
-        log.error("Cannot connect to Supabase: %s", e)
-        return
-
+def build_rows(client: Client, scraped_at: str, hospitals: list[dict]) -> list[dict]:
+    """Builds one wait_times_log row per scraped hospital, plus no_data sentinels."""
     rows = []
     reported_hospital_ids = set()
     for h in hospitals:
@@ -212,27 +188,24 @@ def run_scrape_and_store() -> None:
                 }
             )
 
-    if not rows:
-        log.warning("No valid rows to insert after hospital ID lookup.")
-        return
+    return rows
 
-    # 3. Upsert into wait_times_log
+
+def upsert_rows(client: Client, rows: list[dict]) -> None:
+    """Writes rows to wait_times_log. Raises if Supabase rejects them."""
     # The unique index on (hospital_id, scraped_at) prevents true duplicates.
     # on_conflict="hospital_id,scraped_at" with ignoreDuplicates makes re-runs safe.
-    try:
-        result = (
-            client.table("wait_times_log")
-            .upsert(rows, on_conflict="hospital_id,scraped_at", ignore_duplicates=True)
-            .execute()
-        )
-        inserted = len(result.data) if result.data else 0
-        log.info("Upserted %d rows into wait_times_log.", inserted)
-    except Exception as e:
-        log.error("Supabase upsert failed: %s", e)
-        log.debug("Failed rows: %s", json.dumps(rows, indent=2))
-        return
+    result = (
+        client.table("wait_times_log")
+        .upsert(rows, on_conflict="hospital_id,scraped_at", ignore_duplicates=True)
+        .execute()
+    )
+    inserted = len(result.data) if result.data else 0
+    log.info("Upserted %d rows into wait_times_log.", inserted)
 
-    # 4. Refresh materialized view (best-effort; non-fatal if it fails)
+
+def refresh_daily_stats(client: Client) -> None:
+    """Refreshes the materialized view (best-effort; non-fatal if it fails)."""
     try:
         client.rpc("refresh_daily_stats", {}).execute()
         log.info("Materialized view refreshed.")
@@ -241,27 +214,80 @@ def run_scrape_and_store() -> None:
         # Silently skip if not set up yet.
         log.debug("Could not refresh materialized view (set up db/functions.sql to enable): %s", e)
 
-    log.info("-- Cycle complete ---------------------------------------")
 
+def run_cycle() -> CycleResult:
+    """Scrapes the source and stores the readings."""
+    try:
+        snapshot = scrape_wait_times()
+    except PlaywrightError as e:
+        log.error("Scrape failed (browser/network): %s", e)
+        return CycleResult("failed", error=str(e))
 
-def _store_error_row(status: str, notes: str) -> None:
-    """Logs a sentinel error row so gaps in the time series are visible."""
+    hospitals = snapshot.get("hospitals", [])
+    source_errors = snapshot.get("source_errors", {})
+
+    for url, error in source_errors.items():
+        log.error("Scrape failed for %s: %s", url, error)
+
+    if not hospitals:
+        error = "; ".join(source_errors.values()) or "Zero hospitals parsed from page."
+        log.warning("No hospitals scraped: %s", error)
+        return CycleResult("failed", error=error)
+
+    log.info("Fetched %d hospitals at %s", len(hospitals), snapshot["scraped_at"])
+
     try:
         client = get_supabase_client()
-        client.table("wait_times_log").insert(
+        if not _hospital_cache:
+            load_hospital_cache(client)
+        upsert_rows(client, build_rows(client, snapshot["scraped_at"], hospitals))
+    except Exception as e:
+        log.error("Could not store readings: %s", e)
+        return CycleResult("failed", len(hospitals), str(e))
+
+    refresh_daily_stats(client)
+
+    if source_errors:
+        return CycleResult("partial", len(hospitals), "; ".join(source_errors.values()))
+    return CycleResult("success", len(hospitals))
+
+
+def record_run(started_at: datetime, result: CycleResult) -> None:
+    """Writes the heartbeat row. A failure here must not mask the cycle's own outcome."""
+    try:
+        get_supabase_client().table("scrape_runs").insert(
             {
-                "hospital_id": 1,  # HSC Adult as a proxy; adjust if needed
-                "scraped_at": datetime.now(timezone.utc).isoformat(),
-                "scrape_status": status,
-                "notes": notes[:500],
+                "started_at": started_at.isoformat(),
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "status": result.status,
+                "hospitals_parsed": result.hospitals_parsed,
+                "error": result.error[:500] if result.error else None,
             }
         ).execute()
     except Exception as e:
-        log.error("Could not store error sentinel row: %s", e)
+        log.error("Could not record scrape run: %s", e)
+
+
+def run_scrape_and_store() -> bool:
+    """Runs one cycle and records it. Returns True only if every source succeeded."""
+    log.info("-- Scrape cycle starting --------------------------------")
+    started_at = datetime.now(timezone.utc)
+    result = run_cycle()
+    record_run(started_at, result)
+    log.info("-- Cycle finished: %s ------------------------------", result.status)
+    return result.status == "success"
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Scrape ER wait times into Supabase.")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run one cycle and exit non-zero on failure (used by GitHub Actions).",
+    )
+    args = parser.parse_args()
+
     log.info("Manitoba ER Wait Time Scheduler starting.")
     log.info("Scrape interval: every %d minutes.", SCRAPE_INTERVAL_MINUTES)
 
@@ -270,6 +296,9 @@ def main() -> None:
             "Missing Supabase credentials. Copy .env.example → .env and fill in values."
         )
         sys.exit(1)
+
+    if args.once:
+        sys.exit(0 if run_scrape_and_store() else 1)
 
     # Run once immediately on startup
     run_scrape_and_store()
