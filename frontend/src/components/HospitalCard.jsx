@@ -5,6 +5,7 @@ import { Clock, Users } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useNow } from "@/hooks/useNow";
+import { STALE_THRESHOLD_MINUTES, formatAge } from "@/lib/freshness";
 
 const URGENCY = (mins) => {
   if (mins === null || mins === undefined) return "unknown";
@@ -22,21 +23,6 @@ const URGENCY_STYLES = {
   unknown:  { bar: "bg-slate-600",   badge: "bg-slate-700 text-slate-400",        label: "No data" },
   stale:    { bar: "bg-slate-600",   badge: "bg-slate-700 text-slate-400",        label: "Stale data" },
 };
-
-// A reading older than this is more likely stale than accurate (roughly 3x
-// the scraper's default 30-minute interval), so its urgency color-coding
-// stops being trustworthy and the card should say so instead of guessing.
-const STALE_THRESHOLD_MINUTES = 90;
-
-function formatAge(minutes) {
-  if (!Number.isFinite(minutes)) return "—";
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function formatWait(mins, capped) {
   if (mins === null || mins === undefined) return "—";

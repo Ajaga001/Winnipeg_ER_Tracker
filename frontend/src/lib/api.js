@@ -23,3 +23,8 @@ export function fetchLatest() {
 export function fetchTrends(hours = 24) {
   return apiGet(`/api/wait-times/trends?hours=${hours}`);
 }
+
+// GET /api/findings
+export function fetchFindings() {
+  return apiGet("/api/findings");
+}

@@ -17,6 +17,7 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import { createFindingsRouter } from "./findingsRoutes.js";
 
 dotenv.config();
 
@@ -313,6 +314,8 @@ app.get("/api/wait-times/daily-stats", strictLimiter, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch daily stats." });
   }
 });
+
+app.use(createFindingsRouter(supabase, strictLimiter));
 
 // ── 5. 404 + global error handler ────────────────────────────────────────────
 app.use((_req, res) => {

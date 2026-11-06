@@ -2,33 +2,14 @@
 // Root dashboard layout — status cards grid + trend chart.
 
 import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+import FindingsPage from "./components/findings/FindingsPage";
 import HospitalCard from "./components/HospitalCard";
+import LastUpdatedBadge from "./components/LastUpdatedBadge";
 import WaitTimeTrendChart from "./components/WaitTimeTrendChart";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLatestWaitTimes, useTrends } from "./hooks/useWaitTimes";
-
-function LastUpdatedBadge({ date, onRefresh }) {
-  if (!date) return null;
-  const formatted = date.toLocaleTimeString("en-CA", {
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  });
-  return (
-    <div className="flex items-center gap-3">
-      <span className="text-xs text-slate-500">
-        Updated {formatted}
-      </span>
-      <button
-        onClick={onRefresh}
-        className="text-xs text-sky-400 hover:text-sky-300 transition-colors flex items-center gap-1"
-      >
-        <RefreshCw className="w-3 h-3" />
-        Refresh
-      </button>
-    </div>
-  );
-}
 
 function StatSummary({ hospitals }) {
   if (!hospitals.length) return null;
@@ -68,8 +49,9 @@ function StatSummary({ hospitals }) {
 }
 
 export default function App() {
+  const [view, setView] = useState("live");
   const [trendHours, setTrendHours] = useState(24);
-  const { data: latest, loading: latestLoading, error: latestError, lastUpdated, refresh } = useLatestWaitTimes();
+  const { data: latest, loading: latestLoading, error: latestError, refresh } = useLatestWaitTimes();
   const { data: trends, loading: trendsLoading, error: trendsError } = useTrends(trendHours);
 
   return (
@@ -92,57 +74,68 @@ export default function App() {
               </p>
             </div>
           </div>
-          <LastUpdatedBadge date={lastUpdated} onRefresh={refresh} />
+          <LastUpdatedBadge hospitals={latest} onRefresh={refresh} />
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8">
 
-        {/* Summary bar */}
-        {!latestLoading && !latestError && <StatSummary hospitals={latest} />}
+        <Tabs value={view} onValueChange={setView}>
+          <TabsList>
+            <TabsTrigger value="live">Live</TabsTrigger>
+            <TabsTrigger value="findings">Findings</TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-        {/* Status Cards */}
-        <section>
-          <h2 className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4">
-            Current Status — All Sites
-          </h2>
+        {view === "findings" ? <FindingsPage /> : (
+          <>
+            {/* Summary bar */}
+            {!latestLoading && !latestError && <StatSummary hospitals={latest} />}
 
-          {latestLoading && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <Skeleton key={i} className="h-36 rounded-xl border border-slate-700/30 bg-slate-800/40" />
-              ))}
-            </div>
-          )}
+            {/* Status Cards */}
+            <section>
+              <h2 className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4">
+                Current Status — All Sites
+              </h2>
 
-          {latestError && (
-            <div className="bg-red-950/40 border border-red-800/50 rounded-xl p-4 text-red-400 text-sm">
-              Could not load hospital data: {latestError}
-            </div>
-          )}
+              {latestLoading && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <Skeleton key={i} className="h-36 rounded-xl border border-slate-700/30 bg-slate-800/40" />
+                  ))}
+                </div>
+              )}
 
-          {!latestLoading && !latestError && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {latest.map((hospital) => (
-                <HospitalCard key={hospital.hospital_id} hospital={hospital} />
-              ))}
-            </div>
-          )}
-        </section>
+              {latestError && (
+                <div className="bg-red-950/40 border border-red-800/50 rounded-xl p-4 text-red-400 text-sm">
+                  Could not load hospital data: {latestError}
+                </div>
+              )}
 
-        {/* Trend Chart */}
-        <section>
-          <h2 className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4">
-            Historical Trends
-          </h2>
-          <WaitTimeTrendChart
-            data={trends}
-            loading={trendsLoading}
-            error={trendsError}
-            hours={trendHours}
-            onHoursChange={setTrendHours}
-          />
-        </section>
+              {!latestLoading && !latestError && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {latest.map((hospital) => (
+                    <HospitalCard key={hospital.hospital_id} hospital={hospital} />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* Trend Chart */}
+            <section>
+              <h2 className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4">
+                Historical Trends
+              </h2>
+              <WaitTimeTrendChart
+                data={trends}
+                loading={trendsLoading}
+                error={trendsError}
+                hours={trendHours}
+                onHoursChange={setTrendHours}
+              />
+            </section>
+          </>
+        )}
 
         {/* Footer */}
         <footer className="pt-4 pb-8 border-t border-slate-800 flex flex-wrap justify-between gap-2 text-xs text-slate-600">
