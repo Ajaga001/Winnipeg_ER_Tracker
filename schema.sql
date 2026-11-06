@@ -34,10 +34,9 @@ VALUES
     ('Health Sciences Centre - Children''s Emergency', 'HSC Children''s', 'emergency', 'WRHA'),
     ('Grace Hospital',                              'Grace',         'emergency',   'WRHA'),
     ('St. Boniface Hospital',                       'St. Boniface',  'emergency',   'WRHA'),
-    ('Concordia Hospital',                          'Concordia',     'emergency',   'WRHA'),
-    ('Seven Oaks General Hospital',                 'Seven Oaks',    'emergency',   'WRHA'),
-    ('Victoria Hospital',                           'Victoria',      'urgent_care', 'WRHA'),
-    ('Pan Am Clinic Urgent Care',                   'Pan Am',        'urgent_care', 'WRHA')
+    ('Concordia Hospital',                          'Concordia',     'urgent_care', 'WRHA'),
+    ('Seven Oaks General Hospital',                 'Seven Oaks',    'urgent_care', 'WRHA'),
+    ('Victoria Hospital',                           'Victoria',      'urgent_care', 'WRHA')
 ON CONFLICT (name) DO NOTHING;
 
 -- Auto-update updated_at on any row change
@@ -143,6 +142,7 @@ SELECT DISTINCT ON (wtl.hospital_id)
     wtl.scrape_status
 FROM  wait_times_log wtl
 JOIN  hospitals h ON h.id = wtl.hospital_id
+WHERE h.is_active
 ORDER BY wtl.hospital_id, wtl.scraped_at DESC;
 
 

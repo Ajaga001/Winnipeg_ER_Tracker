@@ -65,7 +65,7 @@ flowchart LR
     UI -->|fetch, polled every 2 min| Routes
 ```
 
-1. **Scrape** — `scrape_wait_times.py` launches headless Chromium via Playwright, navigates to the WRHA emergency wait times page, and parses each hospital's row (facility name, patients waiting, raw wait-time string) into structured minutes (`parse_wait_minutes` handles both `"2h 15m"` and decimal formats like `"12.75 hrs"`).
+1. **Scrape** — `scrape_wait_times.py` launches headless Chromium via Playwright, visits WRHA's two wait-time pages (emergency departments and urgent care centres publish separately; see `SOURCES`), and parses each facility's row (facility name, patients waiting, raw wait-time string) into structured minutes (`parse_wait_minutes` handles both `"2h 15m"` and decimal formats like `"12.75 hrs"`).
 2. **Store** — `scheduler.py` runs on an interval (`SCRAPE_INTERVAL_MINUTES`, default 30), resolves each scraped facility name to a canonical `hospitals.id` (via `HOSPITAL_NAME_ALIASES` and a cached lookup, inserting a stub row only for genuinely unknown facilities), and upserts one row per hospital into `wait_times_log`. Scrape failures are written as sentinel rows (`scrape_status = 'site_down' | 'parse_error'`) instead of being dropped, and the `daily_wait_time_stats` materialized view is refreshed via an RPC call after each successful cycle.
 3. **Serve** — `server.js` is a read-only Express API that queries Supabase with the service-role key (never exposed to the browser) and exposes `/api/hospitals`, `/api/wait-times/latest`, `/api/wait-times/history`, `/api/wait-times/trends`, and `/api/wait-times/daily-stats`, all protected by Helmet, a CORS allowlist, and rate limiting.
 4. **Display** — the React frontend talks only to the Express API (never directly to Supabase — see `frontend/src/lib/api.js`), polling `/api/wait-times/latest` every 2 minutes and re-fetching `/api/wait-times/trends` whenever the selected time range changes.
@@ -78,6 +78,7 @@ Winnipeg_ER_Tracker/
 ├── scheduler.py              # Runs the scraper on an interval, upserts into Supabase
 ├── schema.sql                 # Supabase/Postgres schema: tables, indexes, views, RLS policies
 ├── functions.sql              # Postgres RPC function (refresh_daily_stats) used by the scheduler
+├── migrations/                # Numbered, re-runnable changes for an existing database
 ├── server.js                  # Express API — reads Supabase, serves the frontend
 ├── requirements.txt            # Python dependencies
 ├── package.json                 # Node dependencies for the Express API
@@ -100,7 +101,7 @@ Winnipeg_ER_Tracker/
 
 ### 1. Database
 
-In the Supabase SQL editor, run `schema.sql` then `functions.sql`, in that order. This creates the `hospitals` and `wait_times_log` tables (seeded with the eight WRHA sites the scraper covers), the `daily_wait_time_stats` materialized view, the `latest_wait_times` view, row-level security policies, and the `refresh_daily_stats()` RPC function.
+In the Supabase SQL editor, run `schema.sql` then `functions.sql`, in that order. This creates the `hospitals` and `wait_times_log` tables (seeded with the seven WRHA sites the scraper covers), the `daily_wait_time_stats` materialized view, the `latest_wait_times` view, row-level security policies, and the `refresh_daily_stats()` RPC function.
 
 ### 2. Backend (scraper + scheduler + API)
 
@@ -152,4 +153,4 @@ See `env-security-guide.md` for a deeper walkthrough of where each secret is all
 
 ## Data Attribution
 
-Wait time data is sourced from Shared Health Manitoba / the Winnipeg Regional Health Authority (WRHA)'s public emergency department wait times page, [wrha.mb.ca/wait-times/emergency](https://wrha.mb.ca/wait-times/emergency/) (see `WAIT_TIMES_URL` in `scrape_wait_times.py`). This project is an independent, unofficial tool and is not affiliated with, endorsed by, or operated on behalf of Shared Health Manitoba, the WRHA, or the Government of Manitoba. Wait times are self-reported by each facility, updated on their own schedule, and may be delayed, unavailable, or inaccurate at any given time — **do not use this dashboard to make medical decisions or in place of calling 911 in an emergency.**
+Wait time data is sourced from Shared Health Manitoba / the Winnipeg Regional Health Authority (WRHA)'s public wait-time pages for [emergency departments](https://wrha.mb.ca/wait-times/emergency/) (St. Boniface, HSC Adult, HSC Children's, Grace) and [urgent care centres](https://wrha.mb.ca/wait-times/urgent-care/) (Victoria, Seven Oaks, Concordia); see `SOURCES` in `scrape_wait_times.py`. Pan Am Clinic is a minor injury clinic with no published wait times, so it isn't tracked. This project is an independent, unofficial tool and is not affiliated with, endorsed by, or operated on behalf of Shared Health Manitoba, the WRHA, or the Government of Manitoba. Wait times are self-reported by each facility, updated on their own schedule, and may be delayed, unavailable, or inaccurate at any given time — **do not use this dashboard to make medical decisions or in place of calling 911 in an emergency.**

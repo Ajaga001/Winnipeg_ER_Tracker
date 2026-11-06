@@ -1,10 +1,15 @@
 import json
 import re
 from datetime import datetime, timezone
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
-# Pointing to the live emergency department data
-WAIT_TIMES_URL = "https://wrha.mb.ca/wait-times/emergency/"
+# WRHA publishes emergency departments and urgent care centres on separate
+# pages with identical table layouts. Each entry maps a facility type (the
+# `hospitals.type` value) to the page that lists those facilities.
+SOURCES = (
+    ("emergency", "https://wrha.mb.ca/wait-times/emergency/"),
+    ("urgent_care", "https://wrha.mb.ca/wait-times/urgent-care/"),
+)
 
 
 def parse_wait_minutes(raw_wait_time):
@@ -39,51 +44,63 @@ def parse_patient_count(raw_count):
     return int(match.group()) if match else None
 
 
+def build_hospital_record(cell_texts, facility_type):
+    """Turns one table row (facility, waiting, treating, wait time) into a hospital record."""
+    facility, waiting, _treating, raw_wait_time = cell_texts
+    return {
+        "hospital_name": facility,
+        "facility_type": facility_type,
+        "raw_wait_time": raw_wait_time,
+        "wait_time_minutes": parse_wait_minutes(raw_wait_time),
+        "patients_waiting": parse_patient_count(waiting),
+    }
+
+
+def scrape_source(page, facility_type, url):
+    """Scrapes every facility row from one WRHA wait-times page."""
+    # Navigate and wait for the network to settle
+    page.goto(url, wait_until="networkidle")
+
+    # Wait specifically for the table to appear on the page
+    page.wait_for_selector("table.dcf-table")
+
+    records = []
+
+    # Target the specific rows inside the table body
+    for row in page.query_selector_all("table.dcf-table tbody tr"):
+        cells = row.query_selector_all("td")
+
+        if len(cells) == 4:
+            cell_texts = [cell.inner_text().strip() for cell in cells]
+            records.append(build_hospital_record(cell_texts, facility_type))
+
+    return records
+
+
 def scrape_wait_times():
+    hospitals = []
+    source_errors = {}
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
-        # Navigate and wait for the network to settle
-        page.goto(WAIT_TIMES_URL, wait_until="networkidle")
-
-        # Wait specifically for the table to appear on the page
-        page.wait_for_selector("table.dcf-table")
-
-        hospitals = []
-
-        # Target the specific rows inside the table body
-        rows = page.query_selector_all("table.dcf-table tbody tr")
-
-        for row in rows:
-            # Extract the four data compartments found in the HTML:
-            # facility name, patients waiting, patients being treated, wait time
-            cells = row.query_selector_all("td")
-
-            if len(cells) == 4:
-                facility = cells[0].inner_text().strip()
-                waiting = cells[1].inner_text().strip()
-                raw_wait_time = cells[3].inner_text().strip()
-
-                hospitals.append({
-                    "hospital_name": facility,
-                    "raw_wait_time": raw_wait_time,
-                    "wait_time_minutes": parse_wait_minutes(raw_wait_time),
-                    "patients_waiting": parse_patient_count(waiting),
-                })
+        # One page failing shouldn't cost us the other page's readings
+        for facility_type, url in SOURCES:
+            try:
+                hospitals.extend(scrape_source(page, facility_type, url))
+            except PlaywrightError as e:
+                source_errors[url] = str(e)
 
         browser.close()
 
-        # Structure the final output to match the scheduler/DB contract
-        result = {
-            "scraped_at": datetime.now(timezone.utc).isoformat(),
-            "source_url": WAIT_TIMES_URL,
-            "hospitals": hospitals,
-        }
-
-        print(json.dumps(result, indent=2))
-        return result
+    # Structure the final output to match the scheduler/DB contract
+    return {
+        "scraped_at": datetime.now(timezone.utc).isoformat(),
+        "hospitals": hospitals,
+        "source_errors": source_errors,
+    }
 
 
 if __name__ == "__main__":
-    scrape_wait_times()
+    print(json.dumps(scrape_wait_times(), indent=2))

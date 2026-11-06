@@ -82,6 +82,7 @@ def get_supabase_client() -> Client:
 
 # ── Hospital ID cache ─────────────────────────────────────────────────────────
 _hospital_cache: dict[str, int] = {}  # name → id
+_active_hospital_ids: set[int] = set()  # sites we expect to see in each scrape
 
 # The wait-times page sometimes drops trailing words (e.g. "Emergency") or
 # otherwise abbreviates a facility name relative to the canonical `hospitals.name`
@@ -94,18 +95,19 @@ HOSPITAL_NAME_ALIASES: dict[str, str] = {
 
 
 def load_hospital_cache(client: Client) -> None:
-    """Populates _hospital_cache from the hospitals table."""
-    global _hospital_cache
+    """Populates the hospital caches from the hospitals table."""
+    global _hospital_cache, _active_hospital_ids
     try:
-        result = client.table("hospitals").select("id, name").execute()
+        result = client.table("hospitals").select("id, name, is_active").execute()
         _hospital_cache = {row["name"]: row["id"] for row in result.data}
+        _active_hospital_ids = {row["id"] for row in result.data if row["is_active"]}
         log.info("Hospital cache loaded: %d hospitals", len(_hospital_cache))
     except Exception as e:
         log.error("Failed to load hospital cache: %s", e)
         raise
 
 
-def get_hospital_id(client: Client, name: str) -> int | None:
+def get_hospital_id(client: Client, name: str, facility_type: str) -> int | None:
     """Returns the DB id for a hospital name, inserting a stub row if unknown."""
     canonical_name = HOSPITAL_NAME_ALIASES.get(name, name)
     if canonical_name in _hospital_cache:
@@ -115,11 +117,12 @@ def get_hospital_id(client: Client, name: str) -> int | None:
     try:
         result = (
             client.table("hospitals")
-            .insert({"name": canonical_name, "short_name": canonical_name[:30], "type": "emergency"})
+            .insert({"name": canonical_name, "short_name": canonical_name[:30], "type": facility_type})
             .execute()
         )
         new_id = result.data[0]["id"]
         _hospital_cache[canonical_name] = new_id
+        _active_hospital_ids.add(new_id)
         return new_id
     except Exception as e:
         log.error("Could not insert stub hospital '%s': %s", canonical_name, e)
@@ -140,10 +143,17 @@ def run_scrape_and_store() -> None:
 
     scraped_at = snapshot["scraped_at"]
     hospitals = snapshot.get("hospitals", [])
+    source_errors = snapshot.get("source_errors", {})
+
+    for url, error in source_errors.items():
+        log.error("Scrape failed for %s: %s", url, error)
 
     if not hospitals:
-        log.warning("Scrape succeeded but returned 0 hospitals. Page structure may have changed.")
-        _store_error_row(status="parse_error", notes="Zero hospitals parsed from page.")
+        if source_errors:
+            _store_error_row(status="site_down", notes="; ".join(source_errors.values()))
+        else:
+            log.warning("Scrape succeeded but returned 0 hospitals. Page structure may have changed.")
+            _store_error_row(status="parse_error", notes="Zero hospitals parsed from page.")
         return
 
     log.info("Fetched %d hospitals at %s", len(hospitals), scraped_at)
@@ -160,7 +170,7 @@ def run_scrape_and_store() -> None:
     rows = []
     reported_hospital_ids = set()
     for h in hospitals:
-        hosp_id = get_hospital_id(client, h["hospital_name"])
+        hosp_id = get_hospital_id(client, h["hospital_name"], h["facility_type"])
         if hosp_id is None:
             log.warning("Skipping hospital '%s' – no DB id.", h["hospital_name"])
             continue
@@ -177,11 +187,12 @@ def run_scrape_and_store() -> None:
             }
         )
 
-    # A known hospital that's missing from this cycle's results (e.g. the
+    # An active hospital that's missing from this cycle's results (e.g. the
     # source page dropped it) would otherwise leave its last real reading
     # sitting in `latest_wait_times` forever, looking live when it's actually
     # stale. Record a `no_data` sentinel for it instead, so the gap is visible.
-    missing_hospital_ids = set(_hospital_cache.values()) - reported_hospital_ids
+    # Inactive sites aren't published at all, so they get no sentinel rows.
+    missing_hospital_ids = _active_hospital_ids - reported_hospital_ids
     if missing_hospital_ids:
         log.warning(
             "%d known hospital(s) missing from this scrape: %s",
