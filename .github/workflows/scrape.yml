@@ -4,7 +4,13 @@ on:
   schedule:
     # Off the :00 and :30 marks, where GitHub's load is heaviest and runs get dropped
     - cron: "7,37 * * * *"
+  # Also started every 30 minutes by an outside cron service, since GitHub's schedule lags by hours
   workflow_dispatch:
+
+# The outside trigger and GitHub's schedule can fire close together; run one scrape at a time
+concurrency:
+  group: scrape
+  cancel-in-progress: false
 
 permissions:
   contents: read
